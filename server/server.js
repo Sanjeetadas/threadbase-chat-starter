@@ -3,6 +3,8 @@ import express from "express";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import { verifyToken } from "./middleware/auth.js";
+import { createServer } from "http";  
+import { Server } from "socket.io";
 
 const app = express();
 app.use(cors({ origin: "http://localhost:5173", credentials: true }));
@@ -52,8 +54,56 @@ app.get("/api/me", verifyToken, (req, res) => res.json({ user: req.user }));
    5. Replace app.listen below with httpServer.listen so Socket.io actually starts.
    ===================================================================== */
 
+
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: "http://localhost:5173", credentials: true },
+});
+
+  // 3. (Task: auth) io.use((socket, next) => { ... }) verify the JWT from
+  //       socket.handshake.auth.token, store the payload on socket.data.user.
+
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error("Authentication error: No token provided"));
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return next(new Error("Authentication error: Invalid token"));
+    }
+    socket.data.user = decoded; // Store the payload on socket.data.user
+    next();
+  });
+});
+
+// 4. (Task: rooms) io.on("connection", (socket) => { ... });
+io.on("connection", (socket) => {
+  console.log(`User connected: ${socket.data.user.name}`);
+
+  socket.on("room:join", (roomId) => {
+    socket.join(roomId);
+    console.log(`${socket.data.user.name} joined room ${roomId}`);
+  });
+
+  socket.on("chat:message", ({ roomId, text }) => {
+    const message = {
+      user: socket.data.user.name,
+      text,
+      timestamp: new Date().toISOString(),
+    };
+    io.to(roomId).emit("chat:message", message);
+    console.log(`Message from ${socket.data.user.name} in room ${roomId}: ${text}`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`User disconnected: ${socket.data.user.name}`);
+  });
+});
+
 const PORT = process.env.PORT ?? 3001;
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Server on http://localhost:${PORT}`);
   console.log("  POST /auth/login");
   console.log("  Socket.io: NOT set up yet - that is your job.");
